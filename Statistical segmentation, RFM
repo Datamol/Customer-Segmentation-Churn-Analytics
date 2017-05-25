@@ -1,0 +1,303 @@
+# --- COMPUTING RECENCY, FREQUENCY, MONETARY VALUE ---------
+
+
+# Load text file into local variable called 'data'
+data = read.delim(file.choose(), header = FALSE, sep = '\t', dec = '.')  #file = 'purchases.txt'
+
+# Add headers and interpret the last column as a date, extract year of purchase
+colnames(data) = c('customer_id', 'purchase_amount', 'date_of_purchase')
+data$date_of_purchase = as.Date(data$date_of_purchase, "%Y-%m-%d")
+data$days_since       = as.numeric(difftime(time1 = "2016-01-01",
+                                            time2 = data$date_of_purchase,
+                                            units = "days"))
+
+hist(data$customer_id, breaks = 300, col = "light blue", main = "Histogram of Customers", xlab = "Customer_id")
+hist(data$purchase_amount, breaks = 100, col = "light blue", main = "Histogram of Purchase", xlab = "Purchase")
+hist(data$date_of_purchase, breaks= 120, col = "light blue", main = "Histogram, Monthly Purchase", xlab = "Month")
+hist(data$days_since, breaks= 100, col = "light blue", main = "Histogram, Lapse between Purchase", xlab = "Days")
+
+# Display the data after transformation
+head(data)
+tail(data)
+summary(data)
+count(data)
+
+sorted <- data[order(data$date_of_purchase),] 
+head(sorted)
+tail(sorted)
+# Compute key marketing indicators using SQL language
+library(sqldf)
+
+# Compute recency, frequency, and average purchase amount
+customers = sqldf("SELECT customer_id,
+                          MIN(days_since) AS 'recency',
+                          COUNT(*) AS 'frequency',
+                          AVG(purchase_amount) AS 'amount'
+                   FROM data GROUP BY 1")
+
+# Explore the data
+head(customers)
+summary(customers)
+par(mfrow=c(1,1))
+
+# hist(customers$recency)   #Original modified below for color
+hist(customers$recency, col = "light blue", main = "Histogram of Customer Recency", xlab = "Recency")
+
+hist(customers$frequency, col = "light green", main = "Histogram of Customer Frequency", xlab = "Frequency")
+#hist(customers$frequency)
+
+#hist(customers$amount)
+hist(customers$amount, breaks = 75, col = "green", main = "Histogram of Average Purchase Amount", xlab = "Amount")
+#hist(customers$amount, breaks = 100)
+
+
+# --- PREPARING AND TRANSFORMING DATA ----------------------
+
+
+# Copy customer data into new data frame
+new_data = customers
+
+# Remove customer id as a variable, store it as row names
+head(new_data)
+row.names(new_data) = new_data$customer_id
+new_data$customer_id = NULL
+head(new_data)
+
+# Take the log-transform of the amount, and plot
+new_data$amount = log(new_data$amount)
+#hist(new_data$amount)
+hist(new_data$amount, breaks = 25, col = "light blue", main = "Histogram of Log-transformed Amount", xlab = "Amount")
+
+## For assignment one log of segmentation variable 'frequency'
+new_data$frequency = log(new_data$frequency)
+#hist(new_data$frequency)
+hist(new_data$frequency, col = "light blue", main = "Histogram of Log-transformed Frequency", xlab = "Frequency")
+
+# Standardize variables
+new_data = scale(new_data)
+head(new_data)
+
+
+# --- RUNNING A HIERARCHICAL SEGMENTATION ------------------
+
+
+# Compute distance metrics on standardized data
+# This will likely generate an error on most machines
+# d = dist(new_data)
+
+# Take a 10% sample # changed to 20% 01/27/2017
+sample = seq(1, 18417, by = 5) # original by =10
+head(sample)
+#summary(sample)
+customers_sample = customers[sample, ]
+new_data_sample  = new_data[sample, ]
+
+head(new_data_sample)
+
+# Compute distance metrics on standardized data
+d = dist(new_data_sample)
+
+# Perform hierarchical clustering on distance metrics
+c = hclust(d, method="ward.D2")
+c2 = hclust(d, method="complete")
+
+# Plot de dendogram
+plot(c)
+
+plot(cut(as.dendrogram(c), h=40)$lower[[1]])
+
+rect.hclust(c, k=4, border="red")
+
+# Cut at 9 segments
+members = cutree(c, k = 9)
+
+## For assignment 5 segment solution
+members = cutree(c, k = 4)
+
+
+# Show 30 first customers, frequency table
+members[1:30]
+table(members)
+#plot(members)
+
+# Show profile of each segment
+aggregate(customers_sample[, 2:4], by = list(members), mean)
+
+boxplot(customers_sample$recency ~ members, ylab="Recency", xlab="Cluster")
+boxplot(customers_sample$frequency ~ members, ylab="Frequency", xlab="Cluster")
+boxplot(customers_sample$amount ~ members, ylab="Amount", xlab="Cluster")
+
+# Elbow methos for hierarchial clustering
+# http://www.sthda.com/english/wiki/determining-the-optimal-number-of-clusters-3-must-known-methods-unsupervised-machine-learning
+fviz_nbclust(new_data_sample, hcut, method = "wss") +  geom_vline(xintercept = 4, linetype = 2)
+
+
+# we might check one of the goodness-of-fit metrics for a hierarchical cluster
+#solution. One method is the cophenetic correlation coefficient (CPCC), which
+#assesses how well a dendrogram (in this case c) matches the true distance metric (d)
+
+cor(cophenetic(c2), d)
+
+
+
+##### K Means
+
+set.seed(12345)
+seg.k <- kmeans(new_data_sample, centers=4)
+library(cluster)
+clusplot(new_data_sample, seg.k$cluster, color=TRUE, shade=TRUE, labels=4, lines=0, main="K-means cluster plot")
+
+boxplot(customers_sample$recency ~ seg.k$cluster, ylab="Recency", xlab="Cluster")
+boxplot(customers_sample$frequency ~ seg.k$cluster, ylab="Feequency", xlab="Cluster")
+boxplot(customers_sample$amount ~ seg.k$cluster, ylab="Amount", xlab="Cluster")
+
+# get cluster members
+aggregate(customers_sample[, 2:4], by=list(cluster=seg.k$cluster), mean)
+
+
+
+wssplot <- function(data, nc=15, seed=1234){
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  plot(1:nc, wss, type="b", xlab="Number of Clusters",
+       ylab="Within groups sum of squares")}
+
+wssplot(new_data_sample, nc=14)
+
+
+
+# ALternative way to plot knee
+
+set.seed(12345)
+# Compute and plot wss for k = 2 to k = 15
+k.max <- 12 # Maximal number of clusters
+#data <- iris.scaled
+wss <- sapply(1:k.max, function(k){kmeans(new_data_sample, k, nstart=10 )$tot.withinss})
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+abline(v = 3, lty =2)
+
+
+# Alternative fast method
+install.packages("factoextra")
+library(factoextra)
+fviz_nbclust(x, FUNcluster, method = c("silhouette", "wss"))
+fviz_nbclust(new_data_sample, kmeans, method = "wss") + geom_vline(xintercept = 4, linetype = 2)
+
+## Avg Silhouette method
+require(factoextra)
+require(cluster)
+fviz_nbclust(new_data_sample, kmeans, method = "silhouette")
+
+
+
+## Gap Statistic for Estimating the Number of Clusters
+
+library(cluster)
+gap_stat <- clusGap(new_data_sample, kmeans, 12, B = 100, verbose = interactive())
+
+
+# Simple with factoextra
+fviz_gap_stat(gap_stat)
+
+# Big procedure below
+# https://github.com/echen/gap-statistic/blob/master/gap-statistic.R
+library(plyr)
+library(ggplot2)
+
+# Given a matrix `data`, where rows are observations and columns are individual dimensions, compute and plot the gap statistic (according to a uniform reference distribution).
+gap_statistic = function(data, min_num_clusters = 1, max_num_clusters = 10, num_reference_bootstraps = 10) {
+  num_clusters = min_num_clusters:max_num_clusters
+  actual_dispersions = maply(num_clusters, function(n) dispersion(data, n))
+  ref_dispersions = maply(num_clusters, function(n) reference_dispersion(data, n, num_reference_bootstraps))
+  mean_ref_dispersions = ref_dispersions[ , 1]
+  stddev_ref_dispersions = ref_dispersions[ , 2]
+  gaps = mean_ref_dispersions - actual_dispersions
+  
+  print(plot_gap_statistic(gaps, stddev_ref_dispersions, num_clusters))
+  
+  print(paste("The estimated number of clusters is ", num_clusters[which.max(gaps)], ".", sep = ""))
+  
+  list(gaps = gaps, gap_stddevs = stddev_ref_dispersions)
+}
+
+# Plot the gaps along with error bars.
+plot_gap_statistic = function(gaps, stddevs, num_clusters) {
+  qplot(num_clusters, gaps, xlab = "# clusters", ylab = "gap", geom = "line", main = "Estimating the number of clusters via the gap statistic") + geom_errorbar(aes(num_clusters, ymin = gaps - stddevs, ymax = gaps + stddevs), size = 0.3, width = 0.2, colour = "darkblue")
+}
+
+
+
+# Calculate log(sum_i(within-cluster_i sum of squares around cluster_i mean)).
+dispersion = function(data, num_clusters) {
+  # R's k-means algorithm doesn't work when there is only one cluster.
+  if (num_clusters == 1) {
+    cluster_mean = aaply(data, 2, mean)
+    distances_from_mean = aaply((data - cluster_mean)^2, 1, sum)
+    log(sum(distances_from_mean))
+  } else {	
+    # Run the k-means algorithm `nstart` times. Each run uses at most `iter.max` iterations.
+    k = kmeans(data, centers = num_clusters, nstart = 10, iter.max = 50)
+    # Take the sum, over each cluster, of the within-cluster sum of squares around the cluster mean. Then take the log. This is `W_k` in TWH's notation.
+    log(sum(k$withinss))
+  }
+}
+
+# For an appropriate reference distribution (in this case, uniform points in the same range as `data`), simulate the mean and standard deviation of the dispersion.
+reference_dispersion = function(data, num_clusters, num_reference_bootstraps) {
+  dispersions = maply(1:num_reference_bootstraps, function(i) dispersion(generate_uniform_points(data), num_clusters))
+  mean_dispersion = mean(dispersions)
+  stddev_dispersion = sd(dispersions) / sqrt(1 + 1 / num_reference_bootstraps) # the extra factor accounts for simulation error
+  c(mean_dispersion, stddev_dispersion)
+}
+
+# Generate uniform points within the range of `data`.
+generate_uniform_points = function(data) {
+  # Find the min/max values in each dimension, so that we can generate uniform numbers in these ranges.
+  mins = aaply(data, 2, min)
+  maxs = apply(data, 2, max)
+  
+  num_datapoints = nrow(data)
+  # For each dimension, generate `num_datapoints` points uniformly in the min/max range.
+  uniform_pts = maply(1:length(mins), function(dim) runif(num_datapoints, min = mins[dim], max = maxs[dim]))
+  uniform_pts = t(uniform_pts)
+}
+
+
+gap_statistic(new_data_sample)
+dev.off()
+
+
+### https://www.r-bloggers.com/customer-segmentation-using-purchase-history-another-example-of-matrix-factorization/
+# Not required
+
+# the data come from the bayesm package
+library(bayesm)
+library(NMF)
+
+fit<-nmf(customers, 20, "lee", nrun=20)
+coefmap(fit)
+basismap(fit)
+
+fit<-nmf(customers, 5, "lee", nrun=20)
+basismap(fit)
+coefmap(fit)
+
+# code for sorting and printing
+# the two factor matrices
+h<-coef(fit)
+library(psych)
+fa.sort(t(round(h,3)))
+w<-basis(fit)
+wp<-w/apply(w,1,sum)
+fa.sort(round(wp,3))
+
+# hard clustering
+type<-max.col(w)
+table(type)
+t(aggregate(Scotch, by=list(type), FUN=mean))
+
